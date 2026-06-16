@@ -143,6 +143,45 @@ const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY,
 });
 
+
+async function generateWithRetry(prompt, isJson = false) {
+    const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+
+    for (const model of models) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                return await ai.models.generateContent({
+                    model,
+                    contents: prompt,
+                    config: isJson
+                        ? {
+                              responseMimeType: "application/json",
+                          }
+                        : {},
+                });
+            } catch (error) {
+                const isRetryable =
+                    error.status === 503 ||
+                    error.status === 429 ||
+                    error.message?.includes("UNAVAILABLE");
+
+                console.log(
+                    `Model ${model} failed. Attempt ${attempt}. Error:`,
+                    error.message
+                );
+
+                if (!isRetryable || attempt === 3) break;
+
+                await new Promise((resolve) =>
+                    setTimeout(resolve, attempt * 3000)
+                );
+            }
+        }
+    }
+
+    throw new Error("All Gemini models are busy. Please try again later.");
+}
+
 function cleanJsonResponse(text) {
     return text
         .replace(/```json/g, "")
@@ -231,12 +270,10 @@ JSON FORMAT:
 }
 `;
 
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-        });
+        const response = await generateWithRetry(prompt, true);
 
-        const text = cleanJsonResponse(response.text);
+        // const text = cleanJsonResponse(response.text);
+        const text = cleanJsonResponse(response.text || "");
 
         let parsedData;
 
@@ -306,14 +343,11 @@ User message:
 ${message}
 `;
 
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-        });
+        const response = await generateWithRetry(prompt, false);
 
         res.json({
             success: true,
-            reply: response.text
+            reply: response.text || "Sorry, I could not generate a reply."
         });
 
     } catch (error) {
