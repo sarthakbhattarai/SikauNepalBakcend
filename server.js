@@ -368,6 +368,62 @@ ${message}
     }
 });
 
+
+
+app.post("/api/voice-interview", async (req, res) => {
+    try {
+        const { message, topic, level, language, history } = req.body;
+
+        const selectedLanguage = language || "English";
+
+        const conversationHistory = Array.isArray(history)
+            ? history.map((item) => {
+                return `${item.role === "ai" ? "Interviewer" : "Student"}: ${item.message}`;
+            }).join("\n")
+            : "";
+
+        const prompt = `
+You are Sikau Nepal AI Voice Interviewer.
+
+Topic: ${topic || "general learning"}
+Level: ${level || "beginner"}
+Language: ${selectedLanguage}
+
+Rules:
+Reply like a real human interviewer.
+Keep your answer short because this is voice conversation.
+Ask only one question at a time.
+React to the student's answer first.
+Then ask the next question.
+Do not use markdown.
+Do not use ** or bullet symbols.
+Reply only in ${selectedLanguage}.
+
+Conversation so far:
+${conversationHistory}
+
+Student said:
+${message}
+
+Now reply as the interviewer.
+`;
+
+        const response = await generateWithRetry(prompt, false);
+
+        res.json({
+            success: true,
+            reply: cleanTextResponse(response.text || "")
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: "Voice interview failed",
+            error: error.message
+        });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
