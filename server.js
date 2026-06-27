@@ -144,6 +144,19 @@ const ai = new GoogleGenAI({
 });
 
 
+
+function cleanTextResponse(text) {
+    return text
+        .replace(/\*\*(.*?)\*\*/g, "$1")
+        .replace(/\*(.*?)\*/g, "$1")
+        .replace(/__(.*?)__/g, "$1")
+        .replace(/_(.*?)_/g, "$1")
+        .replace(/`{1,3}/g, "")
+        .replace(/^#+\s/gm, "")
+        .replace(/^\s*[-*]\s+/gm, "")
+        .trim();
+}
+
 async function generateWithRetry(prompt, isJson = false) {
     const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
 
@@ -371,33 +384,108 @@ ${message}
 
 
 app.post("/api/voice-interview", async (req, res) => {
+    console.log("\n==============================");
+    console.log("🎤 /api/voice-interview HIT");
+    console.log("Time:", new Date().toISOString());
+    console.log("==============================");
+
     try {
-        const { message, topic, level, language, history } = req.body;
+        const { message, topic, level, language, history, questionCount } = req.body;
+
+        console.log("📥 Request Body:");
+        console.log(JSON.stringify(req.body, null, 2));
+
+        if (!message) {
+            return res.status(400).json({
+                success: false,
+                message: "Message is required",
+            });
+        }
 
         const selectedLanguage = language || "English";
+        const currentQuestionCount = Number(questionCount || 0);
+        const maxQuestions = 10;
+        const shouldSummarize = currentQuestionCount >= maxQuestions;
 
         const conversationHistory = Array.isArray(history)
-            ? history.map((item) => {
-                return `${item.role === "ai" ? "Interviewer" : "Student"}: ${item.message}`;
-            }).join("\n")
+            ? history
+                  .map((item) => {
+                      return `${item.role === "ai" ? "Interviewer" : "Student"}: ${item.message}`;
+                  })
+                  .join("\n")
             : "";
 
-        const prompt = `
+        let prompt;
+
+        if (shouldSummarize) {
+            prompt = `
+You are Sikau Nepal AI Voice Interviewer.
+
+The interview is now complete.
+
+Topic: ${topic || "general learning"}
+Level: ${level || "beginner"}
+Language: ${selectedLanguage}
+
+Conversation:
+${conversationHistory}
+
+Student final answer:
+${message}
+
+Task:
+Give a final interview summary.
+
+Rules:
+- Reply only in ${selectedLanguage}
+- Do not use markdown
+- Do not use **, *, #, bullet symbols, or code blocks
+- Keep it clear and useful
+- Include:
+1. Overall performance
+2. Strengths
+3. Weak areas
+4. Communication feedback
+5. Suggested improvement plan
+6. Final score out of 100
+
+Return only plain text.
+`;
+        } else {
+            prompt = `
 You are Sikau Nepal AI Voice Interviewer.
 
 Topic: ${topic || "general learning"}
 Level: ${level || "beginner"}
 Language: ${selectedLanguage}
 
-Rules:
-Reply like a real human interviewer.
-Keep your answer short because this is voice conversation.
-Ask only one question at a time.
-React to the student's answer first.
-Then ask the next question.
-Do not use markdown.
-Do not use ** or bullet symbols.
-Reply only in ${selectedLanguage}.
+You are taking a real interview.
+
+Important question rules:
+- Do not stay on only one sub-topic.
+- If the topic is Python, do not only ask loops or conditionals.
+- Randomly cover different areas of the topic.
+- Ask conceptual, logical, practical, and scenario-based questions.
+- Do not ask only coding questions.
+- Ask questions like a real interviewer.
+- Ask only one question at a time.
+- First react briefly to the student's previous answer.
+- Then ask the next question.
+- Keep reply short because this is voice conversation.
+- Do not use markdown.
+- Do not use **, *, #, bullet symbols, or code blocks.
+- Reply only in ${selectedLanguage}.
+
+Question style examples:
+- Conceptual understanding
+- Real-world use case
+- Problem-solving logic
+- Debugging thinking
+- Comparison questions
+- Best practice questions
+- Scenario-based interview questions
+
+Current question number: ${currentQuestionCount + 1} of ${maxQuestions}
 
 Conversation so far:
 ${conversationHistory}
@@ -405,21 +493,40 @@ ${conversationHistory}
 Student said:
 ${message}
 
-Now reply as the interviewer.
+Now respond as the interviewer.
 `;
+        }
+
+        console.log("\n📤 Sending prompt to Gemini...");
+        console.log(prompt);
 
         const response = await generateWithRetry(prompt, false);
 
-        res.json({
-            success: true,
-            reply: cleanTextResponse(response.text || "")
-        });
+        const reply = cleanTextResponse(response.text || "");
 
+        console.log("\n✅ Gemini responded successfully.");
+        console.log("\n🤖 AI Reply:");
+        console.log(reply);
+        console.log("==============================\n");
+
+        return res.json({
+            success: true,
+            reply,
+            isFinished: shouldSummarize,
+            questionNumber: shouldSummarize
+                ? maxQuestions
+                : currentQuestionCount + 1,
+            totalQuestions: maxQuestions,
+            summary: shouldSummarize ? reply : null,
+        });
     } catch (error) {
-        res.status(500).json({
+        console.log("\n❌ VOICE INTERVIEW ERROR");
+        console.error(error);
+        console.log("Error Message:", error.message);
+
+        return res.status(500).json({
             success: false,
             message: "Voice interview failed",
-            error: error.message
         });
     }
 });
